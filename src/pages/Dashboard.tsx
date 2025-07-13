@@ -28,14 +28,13 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     loadInterfaces();
   }, []);
-
   // Poll capture status when capturing
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isCapturing && sessionId) {
       interval = setInterval(() => {
         checkCaptureStatus();
-      }, 2000); // Check every 2 seconds
+      }, 2000);
     }
     return () => {
       if (interval) clearInterval(interval);
@@ -367,37 +366,33 @@ const Dashboard: React.FC = () => {
               </div>
 
               {/* Download Links */}
-              {(results.csv_path || results.predicciones_path) && (
-                <div className="border-t pt-6">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Archivos Generados</h3>
-                  <div className="flex space-x-4">
-                    {results.csv_path && (
-                      <a
-                        href={`http://127.0.0.1:8000/download/${results.csv_path}`}
-                        download
-                        className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                      >
-                        📊 Descargar Dataset CSV
-                      </a>
-                    )}
-                    {results.predicciones_path && (
-                      <a
-                        href={`http://127.0.0.1:8000/download/${results.predicciones_path}`}
-                        download
-                        className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                      >
-                        🤖 Descargar Predicciones
-                      </a>
-                    )}
-                  </div>
-                </div>
-              )}
+              <div className="mt-6 space-y-4">
+                <h3 className="text-lg font-medium text-gray-900 mb-2">Archivos Generados</h3>
+                {results.predicciones_path && (
+                  <a
+                    href={`http://127.0.0.1:8000/download/${results.predicciones_path}`}
+                    className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors mr-4"
+                    download
+                  >
+                    🤖 Descargar Predicciones
+                  </a>
+                )}
+                {results.csv_path && (
+                  <a
+                    href={`http://127.0.0.1:8000/download/${results.csv_path}`}
+                    className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    download
+                  >
+                    📊 Descargar Dataset CSV
+                  </a>
+                )}
+              </div>
             </div>
           )}
 
           {/* Instructions Panel */}
           {!isCapturing && !results && (
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200">
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200 mt-8">
               <h3 className="text-lg font-semibold text-blue-900 mb-4">Instrucciones de Uso</h3>
               <div className="space-y-2 text-blue-800">
                 <p>• <strong>Selecciona la interfaz de red</strong> que deseas monitorear</p>
