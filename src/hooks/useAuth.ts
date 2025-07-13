@@ -10,7 +10,6 @@ interface AuthContextType {
   login: (credentials: LoginCredentials) => Promise<void>;
   register: (credentials: RegisterCredentials) => Promise<void>;
   logout: () => Promise<void>;
-  updateUser: (userData: Partial<User>) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -73,14 +72,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const updateUser = async (userData: Partial<User>) => {
-    try {
-      const updatedUser = await apiService.updateProfile(userData);
-      setUser(updatedUser);
-    } catch (error) {
-      throw error;
-    }
-  };
+
+  // const updateUser = async (userData: Partial<User>) => {
+  //   try {
+  //     const updatedUser = await apiService.updateProfile(userData);
+  //     setUser(updatedUser);
+  //   } catch (error) {
+  //     throw error;
+  //   }
+  // };
 
   const value = {
     user,
@@ -88,8 +88,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     isLoading,
     login,
     register,
-    logout,
-    updateUser,
+    logout
+    // updateUser
   };
 
   return React.createElement(AuthContext.Provider, { value }, children);

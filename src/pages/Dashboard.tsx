@@ -16,115 +16,248 @@ const Dashboard: React.FC = () => {
   const { success, error } = useToast();
   
   // State for network capture
-  const [interfaces, setInterfaces] = useState<string[]>([]);
+  const [interfaces, setInterfaces] = useState<{ name: string; display_name: string }[]>([]);
   const [selectedInterface, setSelectedInterface] = useState<string>('');
   const [duration, setDuration] = useState<number>(30);
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
-  const [captureStatus, setCaptureStatus] = useState<CapturaStatus | null>(null);
-  const [results, setResults] = useState<ProcesamientoResult | null>(null);
-  const [sessionId, setSessionId] = useState<string>('');
+  const [captureStatus, setCaptureStatus] = useState<any | null>(null); // Flexible para nuevos estados
+  const [results, setResults] = useState<any | null>(null);
+  const [jobId, setJobId] = useState<string>('');
+  const [progress, setProgress] = useState<number>(0);
+  const [captureMessage, setCaptureMessage] = useState<string>('');
+  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
-  // Load available network interfaces on component mount
-  useEffect(() => {
-    loadInterfaces();
-  }, []);
-  // Poll capture status when capturing
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isCapturing && sessionId) {
-      interval = setInterval(() => {
-        checkCaptureStatus();
-      }, 2000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isCapturing, sessionId]);
+  // Estado para modal de detalles de anomalía
+  const [selectedAnomaly, setSelectedAnomaly] = useState<any | null>(null);
+  const [showAnomalyModal, setShowAnomalyModal] = useState(false);
 
-  const loadInterfaces = async () => {
-    try {
-      const response = await apiService.get<InterfacesResponse>('/interfaces');
-      if (response.success) {
-        setInterfaces(response.interfaces);
-        if (response.interfaces.length > 0) {
-          setSelectedInterface(response.interfaces[0]);
-        }
-      }
-    } catch (err) {
-      error('Error', 'No se pudieron cargar las interfaces de red');
+  // Diccionario de detalles extra por tipo de ataque
+  const anomalyDetails: Record<string, { causas: string; recomendaciones: string }> = {
+    'BENIGN': {
+      causas: 'Tráfico normal, sin indicios de actividad maliciosa.',
+      recomendaciones: 'No se requiere acción.'
+    },
+    'BOT': {
+      causas: 'Actividad automatizada detectada, posiblemente por malware o scripts.',
+      recomendaciones: 'Verifica dispositivos y ejecuta análisis antivirus.'
+    },
+    'BRUTE FORCE': {
+      causas: 'Intentos repetidos de acceso no autorizado.',
+      recomendaciones: 'Revisa logs de autenticación y refuerza contraseñas.'
+    },
+    'DDOS': {
+      causas: 'Ataque de denegación de servicio distribuido, alto volumen de tráfico.',
+      recomendaciones: 'Implementa mitigación DDoS y contacta a tu proveedor de red.'
+    },
+    'DOS': {
+      causas: 'Ataque de denegación de servicio, tráfico anómalo desde una fuente.',
+      recomendaciones: 'Identifica la fuente y bloquea el tráfico sospechoso.'
+    },
+    'PORT SCAN': {
+      causas: 'Escaneo de puertos detectado, posible reconocimiento previo a un ataque.',
+      recomendaciones: 'Monitorea accesos y limita exposición de servicios innecesarios.'
+    },
+    'WEB ATTACK': {
+      causas: 'Intento de explotación de vulnerabilidades web.',
+      recomendaciones: 'Actualiza tus aplicaciones web y revisa configuraciones de seguridad.'
     }
   };
 
+  // --- useCallback functions (deben ir antes de los useEffect) ---
+  const loadInterfaces = React.useCallback(async () => {
+    try {
+      const response = await apiService.get<InterfacesResponse>('/interfaces');
+      console.log('Respuesta /interfaces (raw):', JSON.stringify(response, null, 2));
+      // Intentar detectar la lista de interfaces en diferentes claves
+      if (response && Array.isArray(response.interfaces)) {
+        setInterfaces(response.interfaces);
+        if (response.interfaces.length > 0) {
+          setSelectedInterface(response.interfaces[0].name);
+        }
+      } else {
+        console.warn('No se recibieron interfaces de red válidas:', response);
+      }
+    } catch (err) {
+      error('Error', 'No se pudieron cargar las interfaces de red');
+      console.error('Error al cargar interfaces:', err);
+    }
+  }, [error]);
+
+
+  // --- useEffect hooks ---
+  useEffect(() => {
+    loadInterfaces();
+  }, [loadInterfaces]);
+
+
+  // Nuevo flujo de captura con feedback inmediato y polling
   const startCapture = async () => {
     if (!selectedInterface) {
       error('Error', 'Selecciona una interfaz de red');
       return;
     }
+    setIsCapturing(true);
+    setResults(null);
+    setProgress(0);
+    setCaptureMessage('⏳ Iniciando...');
+    setCaptureStatus({ status: 'iniciando', progress: 0, message: 'Preparando captura de tráfico...' });
 
     try {
+      // Buscar el objeto de la interfaz seleccionada
+      const selectedIfaceObj = interfaces.find((iface) => iface.name === selectedInterface);
+      if (!selectedIfaceObj) {
+        error('Error', 'No se encontró el objeto de la interfaz seleccionada');
+        setIsCapturing(false);
+        return;
+      }
       const request: CapturaRequest = {
         duracion_segundos: duration,
-        interfaz: selectedInterface
+        interfaz: selectedIfaceObj
       };
 
-      const response = await apiService.post<CapturaResponse>('/captura/iniciar', request);
-      
-      if (response.success) {
-        setSessionId(response.session_id);
-        setIsCapturing(true);
-        setResults(null);
-        success('Captura iniciada', `Capturando tráfico en ${selectedInterface} por ${duration} segundos`);
+      // Respuesta inmediata del backend
+      const response = await apiService.post<any>('/captura/iniciar', request);
+      if (response.success && response.job_id) {
+        setJobId(response.job_id);
+        setCaptureMessage(response.message || '🚀 Captura iniciada');
+        setProgress(0);
+        // Consultar estado después de 2 segundos
+        setTimeout(() => startProgressTracking(response.job_id), 2000);
+        // (Opcional) Iniciar procesamiento real
+        // await apiService.post<any>(`/captura/procesar/${response.job_id}`);
+      } else {
+        setIsCapturing(false);
+        setCaptureMessage('❌ Error al iniciar la captura');
+        error('Error', response.message || 'No se pudo iniciar la captura');
       }
-    } catch (err) {
-      error('Error', 'No se pudo iniciar la captura de tráfico');
+    } catch (err: any) {
+      setIsCapturing(false);
+      setCaptureMessage('❌ Error de conexión');
+      let details = '';
+      if (err && err.response) {
+        details = `Status: ${err.response.status}\n` +
+                  `Data: ${JSON.stringify(err.response.data)}\n` +
+                  `Message: ${err.message}`;
+      } else if (err && err.message) {
+        details = err.message;
+      } else {
+        details = JSON.stringify(err);
+      }
+      error('Error', details || 'No se pudo iniciar la captura de tráfico');
+      console.error('❌ Error al iniciar captura:', err);
     }
+
+  // Seguimiento de progreso con polling HTTP
+  function startProgressTracking(jobId: string) {
+    const checkStatus = async () => {
+      try {
+        const response = await apiService.get<any>(`/api/capture-status/${jobId}`);
+        const statusData = response.data || response;
+        setCaptureStatus(statusData);
+        setProgress(statusData.progress || 0);
+        setCaptureMessage(statusData.message || '');
+
+        // Actualizar UI según estado
+        switch (statusData.status) {
+          case 'iniciando':
+            console.log('🚀 Preparando captura...');
+            break;
+          case 'capturando':
+            console.log('📡 Capturando tráfico de red...');
+            break;
+          case 'procesando':
+            console.log('⚙️ Analizando datos...');
+            break;
+          case 'guardando':
+            console.log('💾 Guardando en base de datos...');
+            break;
+          case 'completado':
+            console.log('✅ Captura completada!');
+            setIsCapturing(false);
+            setResults(statusData.result || null);
+            setCaptureMessage(statusData.message || '✅ Captura completada');
+            onCaptureComplete(statusData);
+            return;
+          case 'error':
+            console.error('❌ Error en captura:', statusData.error);
+            setIsCapturing(false);
+            setCaptureMessage(statusData.message || '❌ Error en la captura');
+            error('Error', statusData.error || statusData.message || 'Error en la captura');
+            return;
+        }
+
+        // Continuar polling si no está completado ni error
+        if (statusData.status !== 'completado' && statusData.status !== 'error') {
+          setTimeout(checkStatus, 3000);
+        }
+      } catch (err: any) {
+        console.error('❌ Error consultando estado:', err);
+        setIsCapturing(false);
+        setCaptureMessage('❌ Error de conexión al consultar estado');
+      }
+    };
+    // Empezar a consultar después de 2 segundos
+    setTimeout(checkStatus, 2000);
+  }
+
+  // Proceso completado
+  function onCaptureComplete(statusData: any) {
+    if (statusData.status === 'completado' && statusData.result) {
+      const { rows_inserted, csv_file } = statusData.result;
+      // Mostrar resultado final
+      success('✅ Captura completada!', `Registros: ${rows_inserted}\nArchivo: ${csv_file}`);
+      // Habilitar botón para nueva captura (ejemplo)
+      // ...
+    }
+  }
   };
+
+  // Polling de estado de captura
+  const pollCaptureStatus = (jobId: string) => {
+    if (pollingInterval) clearInterval(pollingInterval);
+    const interval = setInterval(async () => {
+      try {
+        const statusResp = await apiService.get<any>(`/api/capture-status/${jobId}`);
+        setCaptureStatus(statusResp);
+        setProgress(statusResp.progress || 0);
+        setCaptureMessage(statusResp.message || '');
+
+        if (statusResp.status === 'completado') {
+          clearInterval(interval);
+          setIsCapturing(false);
+          setResults(statusResp.result || null);
+          setCaptureMessage(statusResp.message || '✅ Captura completada');
+        } else if (statusResp.status === 'error') {
+          clearInterval(interval);
+          setIsCapturing(false);
+          setCaptureMessage(statusResp.message || '❌ Error en la captura');
+          error('Error', statusResp.error || statusResp.message || 'Error en la captura');
+        }
+      } catch (err: any) {
+        clearInterval(interval);
+        setIsCapturing(false);
+        setCaptureMessage('❌ Error de conexión al consultar estado');
+        error('Error', err?.message || 'Error de conexión al consultar estado');
+      }
+    }, 2000);
+    setPollingInterval(interval);
+  };
+
 
   const stopCapture = async () => {
     try {
-      await apiService.post(`/captura/detener/${sessionId}`);
+      if (!jobId) throw new Error('No hay captura activa para detener');
+      await apiService.post(`/captura/detener/${jobId}`);
       setIsCapturing(false);
       setCaptureStatus(null);
+      setJobId('');
       success('Captura detenida', 'La captura de tráfico ha sido detenida');
-    } catch (err) {
-      error('Error', 'No se pudo detener la captura');
+    } catch (err: any) {
+      error('Error', err?.message || 'No se pudo detener la captura');
     }
   };
 
-  const checkCaptureStatus = async () => {
-    if (!sessionId) return;
 
-    try {
-      const status = await apiService.get<CapturaStatus>(`/captura/estado/${sessionId}`);
-      setCaptureStatus(status);
-
-      if (status.estado === 'completado') {
-        setIsCapturing(false);
-        processResults();
-      } else if (status.estado === 'error') {
-        setIsCapturing(false);
-        error('Error', 'Error durante la captura de tráfico');
-      }
-    } catch (err) {
-      console.error('Error checking capture status:', err);
-    }
-  };
-
-  const processResults = async () => {
-    if (!sessionId) return;
-
-    try {
-      const result = await apiService.get<ProcesamientoResult>(`/procesar/${sessionId}`);
-      if (result.success) {
-        setResults(result);
-        success('Análisis completado', 
-          `Detectadas ${result.anomalias} anomalías de ${result.total_flows} flujos (${result.porcentaje_anomalias.toFixed(2)}%)`
-        );
-      }
-    } catch (err) {
-      error('Error', 'No se pudieron procesar los resultados');
-    }
-  };
 
   // Handle logout
   const handleLogout = async () => {
@@ -158,28 +291,20 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header with logout button */}
       <div className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <div className="text-sm text-gray-600">
-              Bienvenido, {user.username}
+              Bienvenido, {typeof user.username === 'object' ? JSON.stringify(user.username) : user.username}
             </div>
             <button
               onClick={handleLogout}
               className="flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
             >
-              <LogOut className="h-4 w-4 mr-2" />
-              Cerrar Sesión
+              <LogOut className="h-5 w-5 mr-2" />
+              Cerrar sesión
             </button>
           </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Project Title - Centered and Styled */}
-        <div className="text-center mb-12">
           <h1 className="text-2xl md:text-3xl font-bold text-gray-900 leading-tight mb-4">
             Modelo de aprendizaje supervisado con 
             <span className="text-primary-600 block mt-2">Random Forest</span>
@@ -191,7 +316,8 @@ const Dashboard: React.FC = () => {
             <span>Proyecto de Machine Learning</span>
           </div>
         </div>
-
+      </div>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         {/* Main Content Area - Network Traffic Monitoring */}
         <div className="space-y-8">
           {/* Control Panel */}
@@ -200,7 +326,6 @@ const Dashboard: React.FC = () => {
               <Network className="h-6 w-6 text-primary-600 mr-3" />
               <h2 className="text-xl font-semibold text-gray-900">Panel de Control de Captura</h2>
             </div>
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Interface Selection */}
               <div>
@@ -213,14 +338,18 @@ const Dashboard: React.FC = () => {
                   disabled={isCapturing}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100"
                 >
+                  {interfaces.length === 0 && (
+                    <option value="" disabled>
+                      No hay interfaces disponibles
+                    </option>
+                  )}
                   {interfaces.map((iface) => (
-                    <option key={iface} value={iface}>
-                      {iface}
+                    <option key={iface.name} value={iface.name}>
+                      {iface.display_name}
                     </option>
                   ))}
                 </select>
               </div>
-
               {/* Duration Input */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -230,8 +359,11 @@ const Dashboard: React.FC = () => {
                   type="number"
                   min="10"
                   max="300"
-                  value={duration}
-                  onChange={(e) => setDuration(parseInt(e.target.value))}
+                  value={isNaN(duration) ? 30 : duration}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    setDuration(isNaN(val) ? 30 : val);
+                  }}
                   disabled={isCapturing}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100"
                 />
@@ -261,51 +393,48 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Status Panel */}
+          {/* Status Panel - feedback inmediato y barra de progreso */}
           {(isCapturing || captureStatus) && (
             <div className="bg-white rounded-xl shadow-lg p-6">
               <div className="flex items-center mb-4">
                 <Activity className="h-6 w-6 text-blue-600 mr-3" />
                 <h2 className="text-xl font-semibold text-gray-900">Estado de la Captura</h2>
               </div>
-
-              {captureStatus && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      {captureStatus.estado === 'en_progreso' && (
-                        <>
-                          <Clock className="h-5 w-5 text-blue-500 mr-2" />
-                          <span className="text-sm font-medium text-blue-700">Capturando...</span>
-                        </>
-                      )}
-                      {captureStatus.estado === 'completado' && (
-                        <>
-                          <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
-                          <span className="text-sm font-medium text-green-700">Completado</span>
-                        </>
-                      )}
-                    </div>
-                    <span className="text-sm text-gray-600">
-                      {captureStatus.tiempo_restante > 0 
-                        ? `${captureStatus.tiempo_restante}s restantes`
-                        : 'Procesando...'
-                      }
-                    </span>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center">
+                    {isCapturing && progress < 100 && (
+                      <>
+                        <Clock className="h-5 w-5 text-blue-500 mr-2" />
+                        <span className="text-sm font-medium text-blue-700">{captureMessage || 'Procesando...'}</span>
+                      </>
+                    )}
+                    {progress === 100 && (
+                      <>
+                        <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
+                        <span className="text-sm font-medium text-green-700">Completado</span>
+                      </>
+                    )}
                   </div>
-
-                  {/* Progress Bar */}
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${captureStatus.progreso}%` }}
-                    ></div>
-                  </div>
-                  <div className="text-center text-sm text-gray-600">
-                    {captureStatus.progreso.toFixed(1)}% completado
-                  </div>
+                  <span className="text-sm text-gray-600">
+                    {progress < 100 && isCapturing
+                      ? `Progreso: ${progress}%`
+                      : progress === 100
+                        ? 'Finalizado'
+                        : ''}
+                  </span>
                 </div>
-              )}
+                {/* Progress Bar */}
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${progress}%` }}
+                  ></div>
+                </div>
+                <div className="text-center text-sm text-gray-600">
+                  {progress}% completado
+                </div>
+              </div>
             </div>
           )}
 
@@ -324,7 +453,17 @@ const Dashboard: React.FC = () => {
                     <Network className="h-8 w-8 text-blue-600" />
                     <div className="ml-4">
                       <p className="text-sm font-medium text-blue-600">Total Flujos</p>
-                      <p className="text-2xl font-bold text-blue-900">{results.total_flows}</p>
+                      <p className="text-2xl font-bold text-blue-900">{
+                        Array.isArray(results.total_flows) && results.total_flows.length > 0 && typeof results.total_flows[0] === 'object' && 'name' in results.total_flows[0] && 'description' in results.total_flows[0]
+                          ? (
+                              <ul className="text-left text-xs">
+                                {results.total_flows.map((item: any, idx: number) => (
+                                  <li key={item && item.name ? item.name + '-' + idx : idx}><b>{item.name}:</b> {item.description}</li>
+                                ))}
+                              </ul>
+                            )
+                          : (typeof results.total_flows === 'object' ? JSON.stringify(results.total_flows) : results.total_flows)
+                      }</p>
                     </div>
                   </div>
                 </div>
@@ -335,21 +474,154 @@ const Dashboard: React.FC = () => {
                     <CheckCircle className="h-8 w-8 text-green-600" />
                     <div className="ml-4">
                       <p className="text-sm font-medium text-green-600">Tráfico Normal</p>
-                      <p className="text-2xl font-bold text-green-900">{results.normal}</p>
+                      <p className="text-2xl font-bold text-green-900">{
+                        Array.isArray(results.normal) && results.normal.length > 0 && typeof results.normal[0] === 'object' && 'name' in results.normal[0] && 'description' in results.normal[0]
+                          ? (
+                              <ul className="text-left text-xs">
+                                {results.normal.map((item: any, idx: number) => (
+                                  <li key={item && item.name ? item.name + '-' + idx : idx}><b>{item.name}:</b> {item.description}</li>
+                                ))}
+                              </ul>
+                            )
+                          : (typeof results.normal === 'object' ? JSON.stringify(results.normal) : results.normal)
+                      }</p>
                     </div>
                   </div>
                 </div>
 
-                {/* Anomalies */}
+                {/* Anomalies - Custom visualization by attack type, now interactive */}
                 <div className="bg-red-50 rounded-lg p-4">
                   <div className="flex items-center">
                     <AlertTriangle className="h-8 w-8 text-red-600" />
                     <div className="ml-4">
                       <p className="text-sm font-medium text-red-600">Anomalías</p>
-                      <p className="text-2xl font-bold text-red-900">{results.anomalias}</p>
+                      <div className="text-2xl font-bold text-red-900">
+                        {Array.isArray(results.anomalias) && results.anomalias.length > 0 && typeof results.anomalias[0] === 'object' && 'name' in results.anomalias[0] && 'description' in results.anomalias[0]
+                          ? (
+                              <ul className="text-left text-xs space-y-1">
+                                {results.anomalias.map((item: any, idx: number) => {
+                                  let icon = null;
+                                  let color = '';
+                                  let label = '';
+                                  const upperName = (item.name || '').toUpperCase();
+                                  switch (upperName) {
+                                    case 'BENIGN':
+                                      icon = <CheckCircle className="inline h-4 w-4 text-green-500 mr-1 align-text-bottom" />;
+                                      color = 'text-green-700';
+                                      label = 'Benigno';
+                                      break;
+                                    case 'BOT':
+                                      icon = <Activity className="inline h-4 w-4 text-blue-500 mr-1 align-text-bottom" />;
+                                      color = 'text-blue-700';
+                                      label = 'Bot';
+                                      break;
+                                    case 'BRUTE FORCE':
+                                      icon = <AlertTriangle className="inline h-4 w-4 text-yellow-600 mr-1 align-text-bottom" />;
+                                      color = 'text-yellow-800';
+                                      label = 'Brute Force';
+                                      break;
+                                    case 'DDOS':
+                                      icon = <AlertTriangle className="inline h-4 w-4 text-red-600 mr-1 align-text-bottom" />;
+                                      color = 'text-red-800';
+                                      label = 'DDoS';
+                                      break;
+                                    case 'DOS':
+                                      icon = <AlertTriangle className="inline h-4 w-4 text-orange-600 mr-1 align-text-bottom" />;
+                                      color = 'text-orange-800';
+                                      label = 'DoS';
+                                      break;
+                                    case 'PORT SCAN':
+                                      icon = <Network className="inline h-4 w-4 text-indigo-600 mr-1 align-text-bottom" />;
+                                      color = 'text-indigo-800';
+                                      label = 'Port Scan';
+                                      break;
+                                    case 'WEB ATTACK':
+                                      icon = <AlertTriangle className="inline h-4 w-4 text-pink-600 mr-1 align-text-bottom" />;
+                                      color = 'text-pink-800';
+                                      label = 'Web Attack';
+                                      break;
+                                    default:
+                                      icon = <AlertTriangle className="inline h-4 w-4 text-gray-500 mr-1 align-text-bottom" />;
+                                      color = 'text-gray-800';
+                                      label = item.name;
+                                  }
+                                  return (
+                                    <li
+                                      key={item && item.name ? item.name + '-' + idx : idx}
+                                      className={color + ' cursor-pointer hover:bg-red-100 rounded px-1 py-0.5 transition'}
+                                      onClick={() => {
+                                        setSelectedAnomaly(item);
+                                        setShowAnomalyModal(true);
+                                      }}
+                                      title="Haz clic para ver detalles"
+                                    >
+                                      {icon}
+                                      <b>{label}:</b> {item.description}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )
+                          : (typeof results.anomalias === 'object' ? JSON.stringify(results.anomalias) : results.anomalias)
+                        }
+                      </div>
                     </div>
                   </div>
                 </div>
+
+                {/* Modal de detalles de anomalía */}
+                {showAnomalyModal && selectedAnomaly && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+                    <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full relative animate-fade-in">
+                      <button
+                        className="absolute top-2 right-2 text-gray-500 hover:text-red-600 text-xl font-bold"
+                        onClick={() => setShowAnomalyModal(false)}
+                        aria-label="Cerrar"
+                      >
+                        ×
+                      </button>
+                      <div className="flex items-center mb-2">
+                        {/* Icono grande según tipo */}
+                        {(() => {
+                          const upperName = (selectedAnomaly.name || '').toUpperCase();
+                          switch (upperName) {
+                            case 'BENIGN':
+                              return <CheckCircle className="h-8 w-8 text-green-500 mr-2" />;
+                            case 'BOT':
+                              return <Activity className="h-8 w-8 text-blue-500 mr-2" />;
+                            case 'BRUTE FORCE':
+                              return <AlertTriangle className="h-8 w-8 text-yellow-600 mr-2" />;
+                            case 'DDOS':
+                              return <AlertTriangle className="h-8 w-8 text-red-600 mr-2" />;
+                            case 'DOS':
+                              return <AlertTriangle className="h-8 w-8 text-orange-600 mr-2" />;
+                            case 'PORT SCAN':
+                              return <Network className="h-8 w-8 text-indigo-600 mr-2" />;
+                            case 'WEB ATTACK':
+                              return <AlertTriangle className="h-8 w-8 text-pink-600 mr-2" />;
+                            default:
+                              return <AlertTriangle className="h-8 w-8 text-gray-500 mr-2" />;
+                          }
+                        })()}
+                        <span className="text-xl font-bold text-gray-900">
+                          {selectedAnomaly.name}
+                        </span>
+                      </div>
+                      <div className="mb-2">
+                        <span className="block text-sm text-gray-700 font-semibold">Descripción:</span>
+                        <span className="block text-gray-800">{selectedAnomaly.description}</span>
+                      </div>
+                      <div className="mb-2">
+                        <span className="block text-sm text-gray-700 font-semibold">Posibles causas:</span>
+                        <span className="block text-gray-800">{anomalyDetails[(selectedAnomaly.name || '').toUpperCase()]?.causas || 'No disponible.'}</span>
+                      </div>
+                      <div className="mb-2">
+                        <span className="block text-sm text-gray-700 font-semibold">Recomendaciones:</span>
+                        <span className="block text-gray-800">{anomalyDetails[(selectedAnomaly.name || '').toUpperCase()]?.recomendaciones || 'No disponible.'}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Percentage */}
                 <div className="bg-orange-50 rounded-lg p-4">
@@ -358,7 +630,11 @@ const Dashboard: React.FC = () => {
                     <div className="ml-4">
                       <p className="text-sm font-medium text-orange-600">% Anomalías</p>
                       <p className="text-2xl font-bold text-orange-900">
-                        {results.porcentaje_anomalias.toFixed(2)}%
+                        {typeof results.porcentaje_anomalias === 'object'
+                          ? JSON.stringify(results.porcentaje_anomalias)
+                          : (typeof results.porcentaje_anomalias === 'number'
+                              ? results.porcentaje_anomalias.toFixed(2) + '%'
+                              : results.porcentaje_anomalias)}
                       </p>
                     </div>
                   </div>
@@ -368,7 +644,7 @@ const Dashboard: React.FC = () => {
               {/* Download Links */}
               <div className="mt-6 space-y-4">
                 <h3 className="text-lg font-medium text-gray-900 mb-2">Archivos Generados</h3>
-                {results.predicciones_path && (
+                {results.predicciones_path && typeof results.predicciones_path === 'string' && (
                   <a
                     href={`http://127.0.0.1:8000/download/${results.predicciones_path}`}
                     className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors mr-4"
@@ -377,7 +653,7 @@ const Dashboard: React.FC = () => {
                     🤖 Descargar Predicciones
                   </a>
                 )}
-                {results.csv_path && (
+                {results.csv_path && typeof results.csv_path === 'string' && (
                   <a
                     href={`http://127.0.0.1:8000/download/${results.csv_path}`}
                     className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"

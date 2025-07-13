@@ -55,27 +55,31 @@ class ApiService {
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
     try {
       // Usar el endpoint /login correcto para autenticación
-      await this.api.post<any>('/login', {
+      const response = await this.api.post<any>('/login', {
         username: credentials.username,
         password: credentials.password
       });
-      
-      // Tu backend podría devolver un token real, por ahora simulamos
-      const mockToken = 'mock-jwt-token-' + Date.now();
-      localStorage.setItem('authToken', mockToken);
-      
-      // Necesitamos obtener los datos del usuario después del login
-      // Por ahora simulamos basado en la respuesta
+
+      // El backend debe devolver access_token y posiblemente user info
+      const token = response.data.access_token || response.data.token;
+      if (!token) {
+        throw new Error('No se recibió access_token del backend');
+      }
+      localStorage.setItem('authToken', token);
+
+      // Si el backend devuelve el usuario, úsalo; si no, crea uno básico
+      const user = response.data.user || {
+        id: response.data.id?.toString() || credentials.username,
+        username: credentials.username,
+        avatar: undefined,
+        createdAt: response.data.created_at || new Date().toISOString(),
+        updatedAt: response.data.updated_at || new Date().toISOString()
+      };
+
       return {
-        user: {
-          id: credentials.username, // Temporal hasta que sepamos qué devuelve /login
-          username: credentials.username,
-          avatar: undefined,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-        token: mockToken,
-        refreshToken: mockToken
+        user,
+        token,
+        refreshToken: token
       };
     } catch (error) {
       throw this.handleError(error);
@@ -84,26 +88,32 @@ class ApiService {
 
   async register(credentials: RegisterCredentials): Promise<AuthResponse> {
     try {
-      // Usar el endpoint /usuario de tu API - enviar password no password_hash
-      const response = await this.api.post<any>('/usuario', {
+      // Usar el endpoint correcto de registro (ajusta si tu backend es diferente)
+      const response = await this.api.post<any>('/register', {
         username: credentials.username,
         password: credentials.password
       });
-      
-      // Simulamos un token y respuesta de auth basado en la respuesta real
-      const mockToken = 'mock-jwt-token-' + Date.now();
-      localStorage.setItem('authToken', mockToken);
-      
+
+      // El backend debe devolver access_token y posiblemente user info
+      const token = response.data.access_token || response.data.token;
+      if (!token) {
+        throw new Error('No se recibió access_token del backend');
+      }
+      localStorage.setItem('authToken', token);
+
+      // Si el backend devuelve el usuario, úsalo; si no, crea uno básico
+      const user = response.data.user || {
+        id: response.data.id?.toString() || credentials.username,
+        username: response.data.username || credentials.username,
+        avatar: undefined,
+        createdAt: response.data.created_at || new Date().toISOString(),
+        updatedAt: response.data.updated_at || new Date().toISOString()
+      };
+
       return {
-        user: {
-          id: response.data.id.toString(),
-          username: response.data.username,
-          avatar: undefined,
-          createdAt: response.data.created_at,
-          updatedAt: response.data.created_at
-        },
-        token: mockToken,
-        refreshToken: mockToken
+        user,
+        token,
+        refreshToken: token
       };
     } catch (error) {
       throw this.handleError(error);
@@ -138,16 +148,16 @@ class ApiService {
   // User endpoints
   async getCurrentUser(): Promise<User> {
     try {
-      const response = await this.api.get<any[]>('/usuario');
-      
-      if (response.data && response.data.length > 0) {
-        const userData = response.data[0]; // Tomamos el primer usuario como ejemplo
+      // Usar el endpoint /me para obtener el usuario autenticado
+      const response = await this.api.get<any>('/me');
+      const userData = response.data;
+      if (userData && userData.id && userData.username) {
         return {
           id: userData.id.toString(),
           username: userData.username,
           avatar: undefined,
-          createdAt: userData.created_at,
-          updatedAt: userData.created_at
+          createdAt: userData.created_at || new Date().toISOString(),
+          updatedAt: userData.updated_at || new Date().toISOString()
         };
       } else {
         throw new Error('No user found');
@@ -157,20 +167,21 @@ class ApiService {
     }
   }
 
-  async updateProfile(userData: Partial<User>): Promise<User> {
-    try {
-      const response = await this.api.put<any>('/usuario', userData);
-      return {
-        id: response.data.id.toString(),
-        username: response.data.username,
-        avatar: undefined,
-        createdAt: response.data.created_at,
-        updatedAt: response.data.created_at
-      };
-    } catch (error) {
-      throw this.handleError(error);
-    }
-  }
+  // async updateProfile(userData: Partial<User>): Promise<User> {
+  //   try {
+  //     // Si tu backend soporta actualización de perfil, ajusta el endpoint aquí
+  //     const response = await this.api.put<any>('/me', userData);
+  //     return {
+  //       id: response.data.id.toString(),
+  //       username: response.data.username,
+  //       avatar: undefined,
+  //       createdAt: response.data.created_at,
+  //       updatedAt: response.data.created_at
+  //     };
+  //   } catch (error) {
+  //     throw this.handleError(error);
+  //   }
+  // }
 
   // Utility methods
   private handleError(error: unknown): Error {

@@ -1,3 +1,8 @@
+/* Fix para visibilidad de texto en <select> y <option> en todos los navegadores */
+select, option {
+  color: #222 !important;
+  background: #fff !important;
+}
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

@@ -65,7 +65,7 @@ export interface Toast {
 // Traffic Capture Types
 export interface CapturaRequest {
   duracion_segundos: number;
-  interfaz: string;
+  interfaz: { name: string; display_name: string };
 }
 
 export interface CapturaResponse {
@@ -98,7 +98,7 @@ export interface ProcesamientoResult {
 }
 
 export interface InterfacesResponse {
-  interfaces: string[];
+  interfaces: { name: string; display_name: string }[];
   success: boolean;
   message?: string;
 }
