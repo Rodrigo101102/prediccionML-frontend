@@ -26,11 +26,24 @@ function validateDuration(input: string): number | null {
   return null;
 }
 
-// Test cases
-console.log('Validation tests:');
-console.log('Valid duration 30:', validateDuration('30')); // Should return 30
-console.log('Invalid duration 5:', validateDuration('5')); // Should return null
-console.log('Invalid duration 400:', validateDuration('400')); // Should return null
-console.log('Invalid duration abc:', validateDuration('abc')); // Should return null
+// Simple test to ensure it works
+describe('Type validation', () => {
+  test('should validate duration correctly', () => {
+    expect(validateDuration('30')).toBe(30);
+    expect(validateDuration('5')).toBe(null);
+    expect(validateDuration('400')).toBe(null);
+    expect(validateDuration('abc')).toBe(null);
+  });
+
+  test('should have correct interface structure', () => {
+    expect(testInterface.name).toBe('eth0');
+    expect(testInterface.display_name).toBe('Ethernet Connection');
+  });
+
+  test('should have correct result structure', () => {
+    expect(testResult.porcentaje_anomalias).toBe(25.5);
+    expect(Array.isArray(testResult.anomalias)).toBe(true);
+  });
+});
 
 export { testInterface, testResult, validateDuration };

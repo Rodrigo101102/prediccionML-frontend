@@ -4,12 +4,7 @@ import { useToast } from '../hooks/useToast';
 import { LogOut, Play, Square, Network, Activity, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { 
   CapturaRequest, 
-  CapturaResponse, 
-  CapturaStatus, 
-  ProcesamientoResult, 
-  InterfacesResponse,
-  NetworkInterface,
-  CaptureResult
+  InterfacesResponse
 } from '../types';
 import { apiService } from '../services/api';
 
@@ -27,7 +22,7 @@ const Dashboard: React.FC = () => {
   const [jobId, setJobId] = useState<string>('');
   const [progress, setProgress] = useState<number>(0);
   const [captureMessage, setCaptureMessage] = useState<string>('');
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  const [pollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   // Estado para modal de detalles de anomalía
   const [selectedAnomaly, setSelectedAnomaly] = useState<any | null>(null);
@@ -449,7 +444,7 @@ const Dashboard: React.FC = () => {
                         results && Array.isArray(results.total_flows) && results.total_flows.length > 0
                           ? (
                               <ul className="text-left text-xs">
-                                {results.total_flows.map((item, idx) => (
+                                {results.total_flows.map((item: any, idx: number) => (
                                   <li key={item && item.name ? item.name + '-' + idx : idx}><b>{item.name}:</b> {item.description}</li>
                                 ))}
                               </ul>
@@ -470,7 +465,7 @@ const Dashboard: React.FC = () => {
                         results && Array.isArray(results.normal) && results.normal.length > 0
                           ? (
                               <ul className="text-left text-xs">
-                                {results.normal.map((item, idx) => (
+                                {results.normal.map((item: any, idx: number) => (
                                   <li key={item && item.name ? item.name + '-' + idx : idx}><b>{item.name}:</b> {item.description}</li>
                                 ))}
                               </ul>
