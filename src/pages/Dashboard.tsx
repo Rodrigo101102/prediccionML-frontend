@@ -3,10 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { LogOut, Play, Square, Network, Activity, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { 
-  CapturaRequest, 
-  CapturaResponse, 
-  CapturaStatus, 
-  ProcesamientoResult, 
+  CapturaRequest,
   InterfacesResponse 
 } from '../types';
 import { apiService } from '../services/api';
@@ -25,7 +22,6 @@ const Dashboard: React.FC = () => {
   const [jobId, setJobId] = useState<string>('');
   const [progress, setProgress] = useState<number>(0);
   const [captureMessage, setCaptureMessage] = useState<string>('');
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   // Estado para modal de detalles de anomalía
   const [selectedAnomaly, setSelectedAnomaly] = useState<any | null>(null);
@@ -211,38 +207,6 @@ const Dashboard: React.FC = () => {
     }
   }
   };
-
-  // Polling de estado de captura
-  const pollCaptureStatus = (jobId: string) => {
-    if (pollingInterval) clearInterval(pollingInterval);
-    const interval = setInterval(async () => {
-      try {
-        const statusResp = await apiService.get<any>(`/api/capture-status/${jobId}`);
-        setCaptureStatus(statusResp);
-        setProgress(statusResp.progress || 0);
-        setCaptureMessage(statusResp.message || '');
-
-        if (statusResp.status === 'completado') {
-          clearInterval(interval);
-          setIsCapturing(false);
-          setResults(statusResp.result || null);
-          setCaptureMessage(statusResp.message || '✅ Captura completada');
-        } else if (statusResp.status === 'error') {
-          clearInterval(interval);
-          setIsCapturing(false);
-          setCaptureMessage(statusResp.message || '❌ Error en la captura');
-          error('Error', statusResp.error || statusResp.message || 'Error en la captura');
-        }
-      } catch (err: any) {
-        clearInterval(interval);
-        setIsCapturing(false);
-        setCaptureMessage('❌ Error de conexión al consultar estado');
-        error('Error', err?.message || 'Error de conexión al consultar estado');
-      }
-    }, 2000);
-    setPollingInterval(interval);
-  };
-
 
   const stopCapture = async () => {
     try {
