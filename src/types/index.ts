@@ -65,7 +65,7 @@ export interface Toast {
 // Traffic Capture Types
 export interface CapturaRequest {
   duracion_segundos: number;
-  interfaz: { name: string; display_name: string };
+  interfaz: NetworkInterface;
 }
 
 export interface CapturaResponse {
@@ -97,8 +97,24 @@ export interface ProcesamientoResult {
   success: boolean;
 }
 
+// Network Interface Types
+export interface NetworkInterface {
+  name: string;
+  display_name: string;
+}
+
 export interface InterfacesResponse {
-  interfaces: { name: string; display_name: string }[];
+  interfaces: NetworkInterface[];
   success: boolean;
   message?: string;
+}
+
+// Capture Result Types
+export interface CaptureResult {
+  total_flows: Array<{ name: string; description: string }>;
+  anomalias: Array<{ name: string; description: string }>;
+  normal: Array<{ name: string; description: string }>;
+  porcentaje_anomalias: number;
+  predicciones_path?: string;
+  csv_path?: string;
 }

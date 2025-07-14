@@ -7,7 +7,9 @@ import {
   CapturaResponse, 
   CapturaStatus, 
   ProcesamientoResult, 
-  InterfacesResponse 
+  InterfacesResponse,
+  NetworkInterface,
+  CaptureResult
 } from '../types';
 import { apiService } from '../services/api';
 
@@ -16,19 +18,19 @@ const Dashboard: React.FC = () => {
   const { success, error } = useToast();
   
   // State for network capture
-  const [interfaces, setInterfaces] = useState<{ name: string; display_name: string }[]>([]);
+  const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
   const [selectedInterface, setSelectedInterface] = useState<string>('');
   const [duration, setDuration] = useState<number>(30);
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
   const [captureStatus, setCaptureStatus] = useState<any | null>(null); // Flexible para nuevos estados
-  const [results, setResults] = useState<any | null>(null);
+  const [results, setResults] = useState<CaptureResult | null>(null);
   const [jobId, setJobId] = useState<string>('');
   const [progress, setProgress] = useState<number>(0);
   const [captureMessage, setCaptureMessage] = useState<string>('');
   const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   // Estado para modal de detalles de anomalía
-  const [selectedAnomaly, setSelectedAnomaly] = useState<any | null>(null);
+  const [selectedAnomaly, setSelectedAnomaly] = useState<{ name: string; description: string } | null>(null);
   const [showAnomalyModal, setShowAnomalyModal] = useState(false);
 
   // Diccionario de detalles extra por tipo de ataque
@@ -67,17 +69,16 @@ const Dashboard: React.FC = () => {
   const loadInterfaces = React.useCallback(async () => {
     try {
       const response = await apiService.get<InterfacesResponse>('/interfaces');
-      console.log('Respuesta /interfaces (raw):', JSON.stringify(response, null, 2));
-      // Intentar detectar la lista de interfaces en diferentes claves
-      if (response && Array.isArray(response.interfaces)) {
-        setInterfaces(response.interfaces);
-        if (response.interfaces.length > 0) {
-          setSelectedInterface(response.interfaces[0].name);
-        }
+      const ifaceList = response?.interfaces || response?.data || [];
+      if (Array.isArray(ifaceList) && ifaceList.length > 0) {
+        setInterfaces(ifaceList);
+        setSelectedInterface(ifaceList[0].name);
       } else {
-        console.warn('No se recibieron interfaces de red válidas:', response);
+        setInterfaces([]);
+        error('Advertencia', 'No hay interfaces de red disponibles');
       }
     } catch (err) {
+      setInterfaces([]);
       error('Error', 'No se pudieron cargar las interfaces de red');
       console.error('Error al cargar interfaces:', err);
     }
@@ -88,6 +89,13 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     loadInterfaces();
   }, [loadInterfaces]);
+
+  // Cleanup memory leaks from polling intervals
+  useEffect(() => {
+    return () => {
+      if (pollingInterval) clearInterval(pollingInterval);
+    };
+  }, [pollingInterval]);
 
 
   // Nuevo flujo de captura con feedback inmediato y polling
@@ -133,18 +141,10 @@ const Dashboard: React.FC = () => {
     } catch (err: any) {
       setIsCapturing(false);
       setCaptureMessage('❌ Error de conexión');
-      let details = '';
-      if (err && err.response) {
-        details = `Status: ${err.response.status}\n` +
-                  `Data: ${JSON.stringify(err.response.data)}\n` +
-                  `Message: ${err.message}`;
-      } else if (err && err.message) {
-        details = err.message;
-      } else {
-        details = JSON.stringify(err);
-      }
-      error('Error', details || 'No se pudo iniciar la captura de tráfico');
+      // Technical details only in console
       console.error('❌ Error al iniciar captura:', err);
+      // User-friendly message only
+      error('Error', 'No se pudo iniciar la captura de tráfico');
     }
 
   // Seguimiento de progreso con polling HTTP
@@ -295,7 +295,7 @@ const Dashboard: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <div className="text-sm text-gray-600">
-              Bienvenido, {typeof user.username === 'object' ? JSON.stringify(user.username) : user.username}
+              Bienvenido, {String(user.username)}
             </div>
             <button
               onClick={handleLogout}
@@ -362,7 +362,9 @@ const Dashboard: React.FC = () => {
                   value={isNaN(duration) ? 30 : duration}
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
-                    setDuration(isNaN(val) ? 30 : val);
+                    if (!isNaN(val) && val >= 10 && val <= 300) {
+                      setDuration(val);
+                    }
                   }}
                   disabled={isCapturing}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100"
@@ -462,7 +464,7 @@ const Dashboard: React.FC = () => {
                                 ))}
                               </ul>
                             )
-                          : (typeof results.total_flows === 'object' ? JSON.stringify(results.total_flows) : results.total_flows)
+                          : (results.total_flows ? String(results.total_flows) : 'Sin datos')
                       }</p>
                     </div>
                   </div>
@@ -483,7 +485,7 @@ const Dashboard: React.FC = () => {
                                 ))}
                               </ul>
                             )
-                          : (typeof results.normal === 'object' ? JSON.stringify(results.normal) : results.normal)
+                          : (results.normal ? String(results.normal) : 'Sin datos')
                       }</p>
                     </div>
                   </div>
@@ -562,7 +564,7 @@ const Dashboard: React.FC = () => {
                                 })}
                               </ul>
                             )
-                          : (typeof results.anomalias === 'object' ? JSON.stringify(results.anomalias) : results.anomalias)
+                          : (results.anomalias ? String(results.anomalias) : 'Sin datos')
                         }
                       </div>
                     </div>
@@ -630,11 +632,9 @@ const Dashboard: React.FC = () => {
                     <div className="ml-4">
                       <p className="text-sm font-medium text-orange-600">% Anomalías</p>
                       <p className="text-2xl font-bold text-orange-900">
-                        {typeof results.porcentaje_anomalias === 'object'
-                          ? JSON.stringify(results.porcentaje_anomalias)
-                          : (typeof results.porcentaje_anomalias === 'number'
-                              ? results.porcentaje_anomalias.toFixed(2) + '%'
-                              : results.porcentaje_anomalias)}
+                        {typeof results.porcentaje_anomalias === 'number'
+                          ? results.porcentaje_anomalias.toFixed(2) + '%'
+                          : (results.porcentaje_anomalias ? String(results.porcentaje_anomalias) : 'Sin datos')}
                       </p>
                     </div>
                   </div>
