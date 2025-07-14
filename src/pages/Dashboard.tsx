@@ -16,19 +16,33 @@ const Dashboard: React.FC = () => {
   const { success, error } = useToast();
   
   // State for network capture
-  const [interfaces, setInterfaces] = useState<{ name: string; display_name: string }[]>([]);
-  const [selectedInterface, setSelectedInterface] = useState<string>('');
-  const [duration, setDuration] = useState<number>(30);
-  const [isCapturing, setIsCapturing] = useState<boolean>(false);
-  const [captureStatus, setCaptureStatus] = useState<any | null>(null); // Flexible para nuevos estados
-  const [results, setResults] = useState<any | null>(null);
-  const [jobId, setJobId] = useState<string>('');
-  const [progress, setProgress] = useState<number>(0);
-  const [captureMessage, setCaptureMessage] = useState<string>('');
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
+
+interface NetworkInterface {
+  name: string;
+  display_name: string;
+}
+interface CaptureResult {
+  total_flows: Array<{ name: string; description: string }>;
+  anomalias: Array<{ name: string; description: string }>;
+  normal: Array<{ name: string; description: string }>;
+  porcentaje_anomalias: number;
+  predicciones_path?: string;
+  csv_path?: string;
+}
+
+const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
+const [selectedInterface, setSelectedInterface] = useState<string>('');
+const [duration, setDuration] = useState<number>(30);
+const [isCapturing, setIsCapturing] = useState<boolean>(false);
+const [captureStatus, setCaptureStatus] = useState<CapturaStatus | null>(null);
+const [results, setResults] = useState<CaptureResult | null>(null);
+const [jobId, setJobId] = useState<string>('');
+const [progress, setProgress] = useState<number>(0);
+const [captureMessage, setCaptureMessage] = useState<string>('');
+const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   // Estado para modal de detalles de anomalía
-  const [selectedAnomaly, setSelectedAnomaly] = useState<any | null>(null);
+const [selectedAnomaly, setSelectedAnomaly] = useState<{ name: string; description: string } | null>(null);
   const [showAnomalyModal, setShowAnomalyModal] = useState(false);
 
   // Diccionario de detalles extra por tipo de ataque
@@ -64,24 +78,23 @@ const Dashboard: React.FC = () => {
   };
 
   // --- useCallback functions (deben ir antes de los useEffect) ---
-  const loadInterfaces = React.useCallback(async () => {
-    try {
-      const response = await apiService.get<InterfacesResponse>('/interfaces');
-      console.log('Respuesta /interfaces (raw):', JSON.stringify(response, null, 2));
-      // Intentar detectar la lista de interfaces en diferentes claves
-      if (response && Array.isArray(response.interfaces)) {
-        setInterfaces(response.interfaces);
-        if (response.interfaces.length > 0) {
-          setSelectedInterface(response.interfaces[0].name);
-        }
-      } else {
-        console.warn('No se recibieron interfaces de red válidas:', response);
-      }
-    } catch (err) {
-      error('Error', 'No se pudieron cargar las interfaces de red');
-      console.error('Error al cargar interfaces:', err);
+const loadInterfaces = React.useCallback(async () => {
+  try {
+    const response = await apiService.get<InterfacesResponse>('/interfaces');
+    // Validación robusta
+    const ifaceList = response?.interfaces || response?.data || [];
+    if (Array.isArray(ifaceList) && ifaceList.length > 0) {
+      setInterfaces(ifaceList);
+      setSelectedInterface(ifaceList[0].name);
+    } else {
+      setInterfaces([]);
+      error('Advertencia', 'No hay interfaces de red disponibles');
     }
-  }, [error]);
+  } catch (err) {
+    setInterfaces([]);
+    error('Error', 'No se pudieron cargar las interfaces de red');
+  }
+}, [error]);
 
 
   // --- useEffect hooks ---
@@ -121,10 +134,7 @@ const Dashboard: React.FC = () => {
         setJobId(response.job_id);
         setCaptureMessage(response.message || '🚀 Captura iniciada');
         setProgress(0);
-        // Consultar estado después de 2 segundos
         setTimeout(() => startProgressTracking(response.job_id), 2000);
-        // (Opcional) Iniciar procesamiento real
-        // await apiService.post<any>(`/captura/procesar/${response.job_id}`);
       } else {
         setIsCapturing(false);
         setCaptureMessage('❌ Error al iniciar la captura');
@@ -133,26 +143,16 @@ const Dashboard: React.FC = () => {
     } catch (err: any) {
       setIsCapturing(false);
       setCaptureMessage('❌ Error de conexión');
-      let details = '';
-      if (err && err.response) {
-        details = `Status: ${err.response.status}\n` +
-                  `Data: ${JSON.stringify(err.response.data)}\n` +
-                  `Message: ${err.message}`;
-      } else if (err && err.message) {
-        details = err.message;
-      } else {
-        details = JSON.stringify(err);
-      }
-      error('Error', details || 'No se pudo iniciar la captura de tráfico');
+      // Mensaje amigable para usuario, detalles solo en consola
       console.error('❌ Error al iniciar captura:', err);
+      error('Error', 'No se pudo iniciar la captura de tráfico. Intenta nuevamente.');
     }
 
   // Seguimiento de progreso con polling HTTP
   function startProgressTracking(jobId: string) {
     const checkStatus = async () => {
       try {
-        const response = await apiService.get<any>(`/api/capture-status/${jobId}`);
-        const statusData = response.data || response;
+        const statusData = await apiService.get<any>(`/api/capture-status/${jobId}`);
         setCaptureStatus(statusData);
         setProgress(statusData.progress || 0);
         setCaptureMessage(statusData.message || '');
@@ -213,35 +213,13 @@ const Dashboard: React.FC = () => {
   };
 
   // Polling de estado de captura
-  const pollCaptureStatus = (jobId: string) => {
-    if (pollingInterval) clearInterval(pollingInterval);
-    const interval = setInterval(async () => {
-      try {
-        const statusResp = await apiService.get<any>(`/api/capture-status/${jobId}`);
-        setCaptureStatus(statusResp);
-        setProgress(statusResp.progress || 0);
-        setCaptureMessage(statusResp.message || '');
 
-        if (statusResp.status === 'completado') {
-          clearInterval(interval);
-          setIsCapturing(false);
-          setResults(statusResp.result || null);
-          setCaptureMessage(statusResp.message || '✅ Captura completada');
-        } else if (statusResp.status === 'error') {
-          clearInterval(interval);
-          setIsCapturing(false);
-          setCaptureMessage(statusResp.message || '❌ Error en la captura');
-          error('Error', statusResp.error || statusResp.message || 'Error en la captura');
-        }
-      } catch (err: any) {
-        clearInterval(interval);
-        setIsCapturing(false);
-        setCaptureMessage('❌ Error de conexión al consultar estado');
-        error('Error', err?.message || 'Error de conexión al consultar estado');
-      }
-    }, 2000);
-    setPollingInterval(interval);
-  };
+  // Limpieza de polling para evitar memory leaks
+  useEffect(() => {
+    return () => {
+      if (pollingInterval) clearInterval(pollingInterval);
+    };
+  }, [pollingInterval]);
 
 
   const stopCapture = async () => {
@@ -295,7 +273,7 @@ const Dashboard: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <div className="text-sm text-gray-600">
-              Bienvenido, {typeof user.username === 'object' ? JSON.stringify(user.username) : user.username}
+              Bienvenido, {String(user.username)}
             </div>
             <button
               onClick={handleLogout}
@@ -362,7 +340,9 @@ const Dashboard: React.FC = () => {
                   value={isNaN(duration) ? 30 : duration}
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
-                    setDuration(isNaN(val) ? 30 : val);
+                    if (!isNaN(val) && val >= 10 && val <= 300) {
+                      setDuration(val);
+                    }
                   }}
                   disabled={isCapturing}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100"
@@ -454,15 +434,15 @@ const Dashboard: React.FC = () => {
                     <div className="ml-4">
                       <p className="text-sm font-medium text-blue-600">Total Flujos</p>
                       <p className="text-2xl font-bold text-blue-900">{
-                        Array.isArray(results.total_flows) && results.total_flows.length > 0 && typeof results.total_flows[0] === 'object' && 'name' in results.total_flows[0] && 'description' in results.total_flows[0]
+                        results && Array.isArray(results.total_flows) && results.total_flows.length > 0
                           ? (
                               <ul className="text-left text-xs">
-                                {results.total_flows.map((item: any, idx: number) => (
+                                {results.total_flows.map((item, idx) => (
                                   <li key={item && item.name ? item.name + '-' + idx : idx}><b>{item.name}:</b> {item.description}</li>
                                 ))}
                               </ul>
                             )
-                          : (typeof results.total_flows === 'object' ? JSON.stringify(results.total_flows) : results.total_flows)
+                          : <span>Sin datos</span>
                       }</p>
                     </div>
                   </div>
@@ -475,15 +455,15 @@ const Dashboard: React.FC = () => {
                     <div className="ml-4">
                       <p className="text-sm font-medium text-green-600">Tráfico Normal</p>
                       <p className="text-2xl font-bold text-green-900">{
-                        Array.isArray(results.normal) && results.normal.length > 0 && typeof results.normal[0] === 'object' && 'name' in results.normal[0] && 'description' in results.normal[0]
+                        results && Array.isArray(results.normal) && results.normal.length > 0
                           ? (
                               <ul className="text-left text-xs">
-                                {results.normal.map((item: any, idx: number) => (
+                                {results.normal.map((item, idx) => (
                                   <li key={item && item.name ? item.name + '-' + idx : idx}><b>{item.name}:</b> {item.description}</li>
                                 ))}
                               </ul>
                             )
-                          : (typeof results.normal === 'object' ? JSON.stringify(results.normal) : results.normal)
+                          : <span>Sin datos</span>
                       }</p>
                     </div>
                   </div>
