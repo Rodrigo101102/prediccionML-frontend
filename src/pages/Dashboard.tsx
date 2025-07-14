@@ -1,17 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { LogOut, Play, Square, Network, Activity, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { 
-  CapturaRequest, 
-  CapturaResponse, 
-  CapturaStatus, 
-  ProcesamientoResult, 
+  CapturaRequest,
   InterfacesResponse 
 } from '../types';
 import { apiService } from '../services/api';
 
-const Dashboard: React.FC = () => {
+const Dashboard: React.FC = memo(() => {
   const { user, isLoading, logout } = useAuth();
   const { success, error } = useToast();
   
@@ -25,7 +22,6 @@ const Dashboard: React.FC = () => {
   const [jobId, setJobId] = useState<string>('');
   const [progress, setProgress] = useState<number>(0);
   const [captureMessage, setCaptureMessage] = useState<string>('');
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   // Estado para modal de detalles de anomalía
   const [selectedAnomaly, setSelectedAnomaly] = useState<any | null>(null);
@@ -91,7 +87,7 @@ const Dashboard: React.FC = () => {
 
 
   // Nuevo flujo de captura con feedback inmediato y polling
-  const startCapture = async () => {
+  const startCapture = useCallback(async () => {
     if (!selectedInterface) {
       error('Error', 'Selecciona una interfaz de red');
       return;
@@ -210,41 +206,9 @@ const Dashboard: React.FC = () => {
       // ...
     }
   }
-  };
+  }, [selectedInterface, duration, interfaces, error, success]);
 
-  // Polling de estado de captura
-  const pollCaptureStatus = (jobId: string) => {
-    if (pollingInterval) clearInterval(pollingInterval);
-    const interval = setInterval(async () => {
-      try {
-        const statusResp = await apiService.get<any>(`/api/capture-status/${jobId}`);
-        setCaptureStatus(statusResp);
-        setProgress(statusResp.progress || 0);
-        setCaptureMessage(statusResp.message || '');
-
-        if (statusResp.status === 'completado') {
-          clearInterval(interval);
-          setIsCapturing(false);
-          setResults(statusResp.result || null);
-          setCaptureMessage(statusResp.message || '✅ Captura completada');
-        } else if (statusResp.status === 'error') {
-          clearInterval(interval);
-          setIsCapturing(false);
-          setCaptureMessage(statusResp.message || '❌ Error en la captura');
-          error('Error', statusResp.error || statusResp.message || 'Error en la captura');
-        }
-      } catch (err: any) {
-        clearInterval(interval);
-        setIsCapturing(false);
-        setCaptureMessage('❌ Error de conexión al consultar estado');
-        error('Error', err?.message || 'Error de conexión al consultar estado');
-      }
-    }, 2000);
-    setPollingInterval(interval);
-  };
-
-
-  const stopCapture = async () => {
+  const stopCapture = useCallback(async () => {
     try {
       if (!jobId) throw new Error('No hay captura activa para detener');
       await apiService.post(`/captura/detener/${jobId}`);
@@ -255,19 +219,19 @@ const Dashboard: React.FC = () => {
     } catch (err: any) {
       error('Error', err?.message || 'No se pudo detener la captura');
     }
-  };
+  }, [jobId, success, error]);
 
 
 
   // Handle logout
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       await logout();
       // The logout function should automatically redirect to login
     } catch (error) {
       console.error('Error during logout:', error);
     }
-  };
+  }, [logout]);
 
   // Show loading state while checking authentication
   if (isLoading) {
@@ -683,6 +647,8 @@ const Dashboard: React.FC = () => {
       </div>
     </div>
   );
-};
+});
+
+Dashboard.displayName = 'Dashboard';
 
 export default Dashboard;
