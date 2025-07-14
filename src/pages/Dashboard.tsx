@@ -81,8 +81,8 @@ const [selectedAnomaly, setSelectedAnomaly] = useState<{ name: string; descripti
 const loadInterfaces = React.useCallback(async () => {
   try {
     const response = await apiService.get<InterfacesResponse>('/interfaces');
-    // Validación robusta
-    const ifaceList = response?.interfaces || response?.data || [];
+    // Solo usar response.interfaces según el tipo
+    const ifaceList = response?.interfaces || [];
     if (Array.isArray(ifaceList) && ifaceList.length > 0) {
       setInterfaces(ifaceList);
       setSelectedInterface(ifaceList[0].name);
@@ -113,7 +113,14 @@ const loadInterfaces = React.useCallback(async () => {
     setResults(null);
     setProgress(0);
     setCaptureMessage('⏳ Iniciando...');
-    setCaptureStatus({ status: 'iniciando', progress: 0, message: 'Preparando captura de tráfico...' });
+    // Objeto inicial válido para CapturaStatus
+    setCaptureStatus({
+      session_id: '',
+      estado: 'en_progreso',
+      progreso: 0,
+      tiempo_restante: 0,
+      success: true
+    });
 
     try {
       // Buscar el objeto de la interfaz seleccionada
