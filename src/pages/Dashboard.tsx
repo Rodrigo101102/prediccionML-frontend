@@ -4,10 +4,9 @@ import { useToast } from '../hooks/useToast';
 import { LogOut, Play, Square, Network, Activity, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import { 
   CapturaRequest, 
-  CapturaResponse, 
-  CapturaStatus, 
-  ProcesamientoResult, 
-  InterfacesResponse 
+  InterfacesResponse,
+  NetworkInterface,
+  CaptureResult
 } from '../types';
 import { apiService } from '../services/api';
 
@@ -16,19 +15,19 @@ const Dashboard: React.FC = () => {
   const { success, error } = useToast();
   
   // State for network capture
-  const [interfaces, setInterfaces] = useState<{ name: string; display_name: string }[]>([]);
+  const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
   const [selectedInterface, setSelectedInterface] = useState<string>('');
   const [duration, setDuration] = useState<number>(30);
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
   const [captureStatus, setCaptureStatus] = useState<any | null>(null); // Flexible para nuevos estados
-  const [results, setResults] = useState<any | null>(null);
+  const [results, setResults] = useState<CaptureResult | null>(null);
   const [jobId, setJobId] = useState<string>('');
   const [progress, setProgress] = useState<number>(0);
   const [captureMessage, setCaptureMessage] = useState<string>('');
   const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   // Estado para modal de detalles de anomalía
-  const [selectedAnomaly, setSelectedAnomaly] = useState<any | null>(null);
+  const [selectedAnomaly, setSelectedAnomaly] = useState<{ name: string; description: string } | null>(null);
   const [showAnomalyModal, setShowAnomalyModal] = useState(false);
 
   // Diccionario de detalles extra por tipo de ataque
@@ -68,16 +67,18 @@ const Dashboard: React.FC = () => {
     try {
       const response = await apiService.get<InterfacesResponse>('/interfaces');
       console.log('Respuesta /interfaces (raw):', JSON.stringify(response, null, 2));
+      
       // Intentar detectar la lista de interfaces en diferentes claves
-      if (response && Array.isArray(response.interfaces)) {
-        setInterfaces(response.interfaces);
-        if (response.interfaces.length > 0) {
-          setSelectedInterface(response.interfaces[0].name);
-        }
+      const ifaceList = response?.interfaces || [];
+      if (Array.isArray(ifaceList) && ifaceList.length > 0) {
+        setInterfaces(ifaceList);
+        setSelectedInterface(ifaceList[0].name);
       } else {
-        console.warn('No se recibieron interfaces de red válidas:', response);
+        setInterfaces([]);
+        error('Advertencia', 'No hay interfaces de red disponibles');
       }
     } catch (err) {
+      setInterfaces([]);
       error('Error', 'No se pudieron cargar las interfaces de red');
       console.error('Error al cargar interfaces:', err);
     }
@@ -88,6 +89,13 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     loadInterfaces();
   }, [loadInterfaces]);
+
+  // Cleanup memory leaks
+  useEffect(() => {
+    return () => {
+      if (pollingInterval) clearInterval(pollingInterval);
+    };
+  }, [pollingInterval]);
 
 
   // Nuevo flujo de captura con feedback inmediato y polling
@@ -133,22 +141,17 @@ const Dashboard: React.FC = () => {
     } catch (err: any) {
       setIsCapturing(false);
       setCaptureMessage('❌ Error de conexión');
-      let details = '';
-      if (err && err.response) {
-        details = `Status: ${err.response.status}\n` +
-                  `Data: ${JSON.stringify(err.response.data)}\n` +
-                  `Message: ${err.message}`;
-      } else if (err && err.message) {
-        details = err.message;
-      } else {
-        details = JSON.stringify(err);
-      }
-      error('Error', details || 'No se pudo iniciar la captura de tráfico');
+      // Log technical details to console
       console.error('❌ Error al iniciar captura:', err);
+      // Show simple user-friendly message
+      error('Error', 'No se pudo iniciar la captura de tráfico');
     }
 
   // Seguimiento de progreso con polling HTTP
   function startProgressTracking(jobId: string) {
+    // Clear any existing interval
+    if (pollingInterval) clearInterval(pollingInterval);
+    
     const checkStatus = async () => {
       try {
         const response = await apiService.get<any>(`/api/capture-status/${jobId}`);
@@ -173,6 +176,7 @@ const Dashboard: React.FC = () => {
             break;
           case 'completado':
             console.log('✅ Captura completada!');
+            if (pollingInterval) clearInterval(pollingInterval);
             setIsCapturing(false);
             setResults(statusData.result || null);
             setCaptureMessage(statusData.message || '✅ Captura completada');
@@ -180,24 +184,26 @@ const Dashboard: React.FC = () => {
             return;
           case 'error':
             console.error('❌ Error en captura:', statusData.error);
+            if (pollingInterval) clearInterval(pollingInterval);
             setIsCapturing(false);
             setCaptureMessage(statusData.message || '❌ Error en la captura');
             error('Error', statusData.error || statusData.message || 'Error en la captura');
             return;
         }
-
-        // Continuar polling si no está completado ni error
-        if (statusData.status !== 'completado' && statusData.status !== 'error') {
-          setTimeout(checkStatus, 3000);
-        }
       } catch (err: any) {
         console.error('❌ Error consultando estado:', err);
+        if (pollingInterval) clearInterval(pollingInterval);
         setIsCapturing(false);
         setCaptureMessage('❌ Error de conexión al consultar estado');
       }
     };
-    // Empezar a consultar después de 2 segundos
-    setTimeout(checkStatus, 2000);
+    
+    // Empezar a consultar después de 2 segundos, luego cada 3 segundos
+    setTimeout(() => {
+      checkStatus(); // Primera verificación
+      const interval = setInterval(checkStatus, 3000); // Verificaciones subsecuentes
+      setPollingInterval(interval);
+    }, 2000);
   }
 
   // Proceso completado
@@ -212,42 +218,12 @@ const Dashboard: React.FC = () => {
   }
   };
 
-  // Polling de estado de captura
-  const pollCaptureStatus = (jobId: string) => {
-    if (pollingInterval) clearInterval(pollingInterval);
-    const interval = setInterval(async () => {
-      try {
-        const statusResp = await apiService.get<any>(`/api/capture-status/${jobId}`);
-        setCaptureStatus(statusResp);
-        setProgress(statusResp.progress || 0);
-        setCaptureMessage(statusResp.message || '');
-
-        if (statusResp.status === 'completado') {
-          clearInterval(interval);
-          setIsCapturing(false);
-          setResults(statusResp.result || null);
-          setCaptureMessage(statusResp.message || '✅ Captura completada');
-        } else if (statusResp.status === 'error') {
-          clearInterval(interval);
-          setIsCapturing(false);
-          setCaptureMessage(statusResp.message || '❌ Error en la captura');
-          error('Error', statusResp.error || statusResp.message || 'Error en la captura');
-        }
-      } catch (err: any) {
-        clearInterval(interval);
-        setIsCapturing(false);
-        setCaptureMessage('❌ Error de conexión al consultar estado');
-        error('Error', err?.message || 'Error de conexión al consultar estado');
-      }
-    }, 2000);
-    setPollingInterval(interval);
-  };
-
-
   const stopCapture = async () => {
     try {
       if (!jobId) throw new Error('No hay captura activa para detener');
       await apiService.post(`/captura/detener/${jobId}`);
+      if (pollingInterval) clearInterval(pollingInterval);
+      setPollingInterval(null);
       setIsCapturing(false);
       setCaptureStatus(null);
       setJobId('');
@@ -295,7 +271,7 @@ const Dashboard: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <div className="text-sm text-gray-600">
-              Bienvenido, {typeof user.username === 'object' ? JSON.stringify(user.username) : user.username}
+              Bienvenido, {String(user.username)}
             </div>
             <button
               onClick={handleLogout}
@@ -362,7 +338,9 @@ const Dashboard: React.FC = () => {
                   value={isNaN(duration) ? 30 : duration}
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
-                    setDuration(isNaN(val) ? 30 : val);
+                    if (!isNaN(val) && val >= 10 && val <= 300) {
+                      setDuration(val);
+                    }
                   }}
                   disabled={isCapturing}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100"
@@ -453,17 +431,19 @@ const Dashboard: React.FC = () => {
                     <Network className="h-8 w-8 text-blue-600" />
                     <div className="ml-4">
                       <p className="text-sm font-medium text-blue-600">Total Flujos</p>
-                      <p className="text-2xl font-bold text-blue-900">{
-                        Array.isArray(results.total_flows) && results.total_flows.length > 0 && typeof results.total_flows[0] === 'object' && 'name' in results.total_flows[0] && 'description' in results.total_flows[0]
-                          ? (
-                              <ul className="text-left text-xs">
-                                {results.total_flows.map((item: any, idx: number) => (
-                                  <li key={item && item.name ? item.name + '-' + idx : idx}><b>{item.name}:</b> {item.description}</li>
-                                ))}
-                              </ul>
-                            )
-                          : (typeof results.total_flows === 'object' ? JSON.stringify(results.total_flows) : results.total_flows)
-                      }</p>
+                      <div className="text-xs text-blue-900">
+                        {results.total_flows && results.total_flows.length > 0 ? (
+                          <ul className="text-left">
+                            {results.total_flows.map((item, idx) => (
+                              <li key={`${item.name}-${idx}`}>
+                                <b>{item.name}:</b> {item.description}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          'Sin datos'
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -474,17 +454,19 @@ const Dashboard: React.FC = () => {
                     <CheckCircle className="h-8 w-8 text-green-600" />
                     <div className="ml-4">
                       <p className="text-sm font-medium text-green-600">Tráfico Normal</p>
-                      <p className="text-2xl font-bold text-green-900">{
-                        Array.isArray(results.normal) && results.normal.length > 0 && typeof results.normal[0] === 'object' && 'name' in results.normal[0] && 'description' in results.normal[0]
-                          ? (
-                              <ul className="text-left text-xs">
-                                {results.normal.map((item: any, idx: number) => (
-                                  <li key={item && item.name ? item.name + '-' + idx : idx}><b>{item.name}:</b> {item.description}</li>
-                                ))}
-                              </ul>
-                            )
-                          : (typeof results.normal === 'object' ? JSON.stringify(results.normal) : results.normal)
-                      }</p>
+                      <div className="text-xs text-green-900">
+                        {results.normal && results.normal.length > 0 ? (
+                          <ul className="text-left">
+                            {results.normal.map((item, idx) => (
+                              <li key={`${item.name}-${idx}`}>
+                                <b>{item.name}:</b> {item.description}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          'Sin datos'
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -495,75 +477,74 @@ const Dashboard: React.FC = () => {
                     <AlertTriangle className="h-8 w-8 text-red-600" />
                     <div className="ml-4">
                       <p className="text-sm font-medium text-red-600">Anomalías</p>
-                      <div className="text-2xl font-bold text-red-900">
-                        {Array.isArray(results.anomalias) && results.anomalias.length > 0 && typeof results.anomalias[0] === 'object' && 'name' in results.anomalias[0] && 'description' in results.anomalias[0]
-                          ? (
-                              <ul className="text-left text-xs space-y-1">
-                                {results.anomalias.map((item: any, idx: number) => {
-                                  let icon = null;
-                                  let color = '';
-                                  let label = '';
-                                  const upperName = (item.name || '').toUpperCase();
-                                  switch (upperName) {
-                                    case 'BENIGN':
-                                      icon = <CheckCircle className="inline h-4 w-4 text-green-500 mr-1 align-text-bottom" />;
-                                      color = 'text-green-700';
-                                      label = 'Benigno';
-                                      break;
-                                    case 'BOT':
-                                      icon = <Activity className="inline h-4 w-4 text-blue-500 mr-1 align-text-bottom" />;
-                                      color = 'text-blue-700';
-                                      label = 'Bot';
-                                      break;
-                                    case 'BRUTE FORCE':
-                                      icon = <AlertTriangle className="inline h-4 w-4 text-yellow-600 mr-1 align-text-bottom" />;
-                                      color = 'text-yellow-800';
-                                      label = 'Brute Force';
-                                      break;
-                                    case 'DDOS':
-                                      icon = <AlertTriangle className="inline h-4 w-4 text-red-600 mr-1 align-text-bottom" />;
-                                      color = 'text-red-800';
-                                      label = 'DDoS';
-                                      break;
-                                    case 'DOS':
-                                      icon = <AlertTriangle className="inline h-4 w-4 text-orange-600 mr-1 align-text-bottom" />;
-                                      color = 'text-orange-800';
-                                      label = 'DoS';
-                                      break;
-                                    case 'PORT SCAN':
-                                      icon = <Network className="inline h-4 w-4 text-indigo-600 mr-1 align-text-bottom" />;
-                                      color = 'text-indigo-800';
-                                      label = 'Port Scan';
-                                      break;
-                                    case 'WEB ATTACK':
-                                      icon = <AlertTriangle className="inline h-4 w-4 text-pink-600 mr-1 align-text-bottom" />;
-                                      color = 'text-pink-800';
-                                      label = 'Web Attack';
-                                      break;
-                                    default:
-                                      icon = <AlertTriangle className="inline h-4 w-4 text-gray-500 mr-1 align-text-bottom" />;
-                                      color = 'text-gray-800';
-                                      label = item.name;
-                                  }
-                                  return (
-                                    <li
-                                      key={item && item.name ? item.name + '-' + idx : idx}
-                                      className={color + ' cursor-pointer hover:bg-red-100 rounded px-1 py-0.5 transition'}
-                                      onClick={() => {
-                                        setSelectedAnomaly(item);
-                                        setShowAnomalyModal(true);
-                                      }}
-                                      title="Haz clic para ver detalles"
-                                    >
-                                      {icon}
-                                      <b>{label}:</b> {item.description}
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            )
-                          : (typeof results.anomalias === 'object' ? JSON.stringify(results.anomalias) : results.anomalias)
-                        }
+                      <div className="text-xs text-red-900">
+                        {results.anomalias && results.anomalias.length > 0 ? (
+                          <ul className="text-left space-y-1">
+                            {results.anomalias.map((item, idx) => {
+                              let icon = null;
+                              let color = '';
+                              let label = '';
+                              const upperName = (item.name || '').toUpperCase();
+                              switch (upperName) {
+                                case 'BENIGN':
+                                  icon = <CheckCircle className="inline h-4 w-4 text-green-500 mr-1 align-text-bottom" />;
+                                  color = 'text-green-700';
+                                  label = 'Benigno';
+                                  break;
+                                case 'BOT':
+                                  icon = <Activity className="inline h-4 w-4 text-blue-500 mr-1 align-text-bottom" />;
+                                  color = 'text-blue-700';
+                                  label = 'Bot';
+                                  break;
+                                case 'BRUTE FORCE':
+                                  icon = <AlertTriangle className="inline h-4 w-4 text-yellow-600 mr-1 align-text-bottom" />;
+                                  color = 'text-yellow-800';
+                                  label = 'Brute Force';
+                                  break;
+                                case 'DDOS':
+                                  icon = <AlertTriangle className="inline h-4 w-4 text-red-600 mr-1 align-text-bottom" />;
+                                  color = 'text-red-800';
+                                  label = 'DDoS';
+                                  break;
+                                case 'DOS':
+                                  icon = <AlertTriangle className="inline h-4 w-4 text-orange-600 mr-1 align-text-bottom" />;
+                                  color = 'text-orange-800';
+                                  label = 'DoS';
+                                  break;
+                                case 'PORT SCAN':
+                                  icon = <Network className="inline h-4 w-4 text-indigo-600 mr-1 align-text-bottom" />;
+                                  color = 'text-indigo-800';
+                                  label = 'Port Scan';
+                                  break;
+                                case 'WEB ATTACK':
+                                  icon = <AlertTriangle className="inline h-4 w-4 text-pink-600 mr-1 align-text-bottom" />;
+                                  color = 'text-pink-800';
+                                  label = 'Web Attack';
+                                  break;
+                                default:
+                                  icon = <AlertTriangle className="inline h-4 w-4 text-gray-500 mr-1 align-text-bottom" />;
+                                  color = 'text-gray-800';
+                                  label = item.name;
+                              }
+                              return (
+                                <li
+                                  key={`${item.name}-${idx}`}
+                                  className={`${color} cursor-pointer hover:bg-red-100 rounded px-1 py-0.5 transition`}
+                                  onClick={() => {
+                                    setSelectedAnomaly(item);
+                                    setShowAnomalyModal(true);
+                                  }}
+                                  title="Haz clic para ver detalles"
+                                >
+                                  {icon}
+                                  <b>{label}:</b> {item.description}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : (
+                          'Sin datos'
+                        )}
                       </div>
                     </div>
                   </div>
@@ -630,11 +611,9 @@ const Dashboard: React.FC = () => {
                     <div className="ml-4">
                       <p className="text-sm font-medium text-orange-600">% Anomalías</p>
                       <p className="text-2xl font-bold text-orange-900">
-                        {typeof results.porcentaje_anomalias === 'object'
-                          ? JSON.stringify(results.porcentaje_anomalias)
-                          : (typeof results.porcentaje_anomalias === 'number'
-                              ? results.porcentaje_anomalias.toFixed(2) + '%'
-                              : results.porcentaje_anomalias)}
+                        {typeof results.porcentaje_anomalias === 'number'
+                          ? `${results.porcentaje_anomalias.toFixed(2)}%`
+                          : 'Sin datos'}
                       </p>
                     </div>
                   </div>
