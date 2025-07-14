@@ -23,31 +23,31 @@ class ErrorBoundary extends Component<Props, State> {
     };
   }
 
-  public static getDerivedStateFromError(error: Error): State {
+  public static getDerivedStateFromError(_error: Error): State {
     return {
       hasError: true,
-      error,
+      error: _error,
       errorInfo: null,
     };
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('ErrorBoundary caught an error:', error, errorInfo);
+  public componentDidCatch(_error: Error, _errorInfo: ErrorInfo) {
+    console.error('ErrorBoundary caught an error:', _error, _errorInfo);
     
     // Log to external service in production
     if (process.env.NODE_ENV === 'production') {
       // TODO: Send to logging service
-      console.error('Production error:', { error, errorInfo });
+      console.error('Production error:', { error: _error, errorInfo: _errorInfo });
     }
 
     this.setState({
-      error,
-      errorInfo,
+      error: _error,
+      errorInfo: _errorInfo,
     });
 
     // Call optional error handler
     if (this.props.onError) {
-      this.props.onError(error, errorInfo);
+      this.props.onError(_error, _errorInfo);
     }
   }
 

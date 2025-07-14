@@ -1,4 +1,4 @@
-import React, { InputHTMLAttributes, forwardRef, useState, useCallback } from 'react';
+import React, { InputHTMLAttributes, forwardRef, useState, useCallback, memo } from 'react';
 import { Eye, EyeOff, AlertCircle, CheckCircle2, LucideIcon } from 'lucide-react';
 
 interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'size'> {
@@ -266,4 +266,4 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
 
 Textarea.displayName = 'Textarea';
 
-export default Input;
+export default memo(Input);

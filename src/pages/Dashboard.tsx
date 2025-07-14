@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { LogOut, Play, Square, Network, Activity, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
@@ -8,7 +8,7 @@ import {
 } from '../types';
 import { apiService } from '../services/api';
 
-const Dashboard: React.FC = () => {
+const Dashboard: React.FC = memo(() => {
   const { user, isLoading, logout } = useAuth();
   const { success, error } = useToast();
   
@@ -87,7 +87,7 @@ const Dashboard: React.FC = () => {
 
 
   // Nuevo flujo de captura con feedback inmediato y polling
-  const startCapture = async () => {
+  const startCapture = useCallback(async () => {
     if (!selectedInterface) {
       error('Error', 'Selecciona una interfaz de red');
       return;
@@ -206,9 +206,9 @@ const Dashboard: React.FC = () => {
       // ...
     }
   }
-  };
+  }, [selectedInterface, duration, interfaces, error, success]);
 
-  const stopCapture = async () => {
+  const stopCapture = useCallback(async () => {
     try {
       if (!jobId) throw new Error('No hay captura activa para detener');
       await apiService.post(`/captura/detener/${jobId}`);
@@ -219,19 +219,19 @@ const Dashboard: React.FC = () => {
     } catch (err: any) {
       error('Error', err?.message || 'No se pudo detener la captura');
     }
-  };
+  }, [jobId, success, error]);
 
 
 
   // Handle logout
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       await logout();
       // The logout function should automatically redirect to login
     } catch (error) {
       console.error('Error during logout:', error);
     }
-  };
+  }, [logout]);
 
   // Show loading state while checking authentication
   if (isLoading) {
@@ -647,6 +647,8 @@ const Dashboard: React.FC = () => {
       </div>
     </div>
   );
-};
+});
+
+Dashboard.displayName = 'Dashboard';
 
 export default Dashboard;
