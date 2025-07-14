@@ -7,7 +7,9 @@ import {
   CapturaResponse, 
   CapturaStatus, 
   ProcesamientoResult, 
-  InterfacesResponse 
+  InterfacesResponse,
+  NetworkInterface,
+  CaptureResult
 } from '../types';
 import { apiService } from '../services/api';
 
@@ -16,33 +18,19 @@ const Dashboard: React.FC = () => {
   const { success, error } = useToast();
   
   // State for network capture
-
-interface NetworkInterface {
-  name: string;
-  display_name: string;
-}
-interface CaptureResult {
-  total_flows: Array<{ name: string; description: string }>;
-  anomalias: Array<{ name: string; description: string }>;
-  normal: Array<{ name: string; description: string }>;
-  porcentaje_anomalias: number;
-  predicciones_path?: string;
-  csv_path?: string;
-}
-
-const [interfaces, setInterfaces] = useState<NetworkInterface[]>([]);
-const [selectedInterface, setSelectedInterface] = useState<string>('');
-const [duration, setDuration] = useState<number>(30);
-const [isCapturing, setIsCapturing] = useState<boolean>(false);
-const [captureStatus, setCaptureStatus] = useState<CapturaStatus | null>(null);
-const [results, setResults] = useState<CaptureResult | null>(null);
-const [jobId, setJobId] = useState<string>('');
-const [progress, setProgress] = useState<number>(0);
-const [captureMessage, setCaptureMessage] = useState<string>('');
-const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  const [interfaces, setInterfaces] = useState<{ name: string; display_name: string }[]>([]);
+  const [selectedInterface, setSelectedInterface] = useState<string>('');
+  const [duration, setDuration] = useState<number>(30);
+  const [isCapturing, setIsCapturing] = useState<boolean>(false);
+  const [captureStatus, setCaptureStatus] = useState<any | null>(null); // Flexible para nuevos estados
+  const [results, setResults] = useState<any | null>(null);
+  const [jobId, setJobId] = useState<string>('');
+  const [progress, setProgress] = useState<number>(0);
+  const [captureMessage, setCaptureMessage] = useState<string>('');
+  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
 
   // Estado para modal de detalles de anomalía
-const [selectedAnomaly, setSelectedAnomaly] = useState<{ name: string; description: string } | null>(null);
+  const [selectedAnomaly, setSelectedAnomaly] = useState<any | null>(null);
   const [showAnomalyModal, setShowAnomalyModal] = useState(false);
 
   // Diccionario de detalles extra por tipo de ataque
@@ -78,29 +66,37 @@ const [selectedAnomaly, setSelectedAnomaly] = useState<{ name: string; descripti
   };
 
   // --- useCallback functions (deben ir antes de los useEffect) ---
-const loadInterfaces = React.useCallback(async () => {
-  try {
-    const response = await apiService.get<InterfacesResponse>('/interfaces');
-    // Solo usar response.interfaces según el tipo
-    const ifaceList = response?.interfaces || [];
-    if (Array.isArray(ifaceList) && ifaceList.length > 0) {
-      setInterfaces(ifaceList);
-      setSelectedInterface(ifaceList[0].name);
-    } else {
-      setInterfaces([]);
-      error('Advertencia', 'No hay interfaces de red disponibles');
+  const loadInterfaces = React.useCallback(async () => {
+    try {
+      const response = await apiService.get<InterfacesResponse>('/interfaces');
+      console.log('Respuesta /interfaces (raw):', JSON.stringify(response, null, 2));
+      // Intentar detectar la lista de interfaces en diferentes claves
+      if (response && Array.isArray(response.interfaces)) {
+        setInterfaces(response.interfaces);
+        if (response.interfaces.length > 0) {
+          setSelectedInterface(response.interfaces[0].name);
+        }
+      } else {
+        console.warn('No se recibieron interfaces de red válidas:', response);
+      }
+    } catch (err) {
+      error('Error', 'No se pudieron cargar las interfaces de red');
+      console.error('Error al cargar interfaces:', err);
     }
-  } catch (err) {
-    setInterfaces([]);
-    error('Error', 'No se pudieron cargar las interfaces de red');
-  }
-}, [error]);
+  }, [error]);
 
 
   // --- useEffect hooks ---
   useEffect(() => {
     loadInterfaces();
   }, [loadInterfaces]);
+
+  // Cleanup memory leaks from polling intervals
+  useEffect(() => {
+    return () => {
+      if (pollingInterval) clearInterval(pollingInterval);
+    };
+  }, [pollingInterval]);
 
 
   // Nuevo flujo de captura con feedback inmediato y polling
@@ -150,9 +146,18 @@ const loadInterfaces = React.useCallback(async () => {
     } catch (err: any) {
       setIsCapturing(false);
       setCaptureMessage('❌ Error de conexión');
-      // Mensaje amigable para usuario, detalles solo en consola
+      let details = '';
+      if (err && err.response) {
+        details = `Status: ${err.response.status}\n` +
+                  `Data: ${JSON.stringify(err.response.data)}\n` +
+                  `Message: ${err.message}`;
+      } else if (err && err.message) {
+        details = err.message;
+      } else {
+        details = JSON.stringify(err);
+      }
+      error('Error', details || 'No se pudo iniciar la captura de tráfico');
       console.error('❌ Error al iniciar captura:', err);
-      error('Error', 'No se pudo iniciar la captura de tráfico. Intenta nuevamente.');
     }
 
   // Seguimiento de progreso con polling HTTP
@@ -449,7 +454,7 @@ const loadInterfaces = React.useCallback(async () => {
                                 ))}
                               </ul>
                             )
-                          : <span>Sin datos</span>
+                          : (typeof results.total_flows === 'object' ? JSON.stringify(results.total_flows) : results.total_flows)
                       }</p>
                     </div>
                   </div>
@@ -470,7 +475,7 @@ const loadInterfaces = React.useCallback(async () => {
                                 ))}
                               </ul>
                             )
-                          : <span>Sin datos</span>
+                          : (typeof results.normal === 'object' ? JSON.stringify(results.normal) : results.normal)
                       }</p>
                     </div>
                   </div>
@@ -549,7 +554,7 @@ const loadInterfaces = React.useCallback(async () => {
                                 })}
                               </ul>
                             )
-                          : (typeof results.anomalias === 'object' ? JSON.stringify(results.anomalias) : results.anomalias)
+                          : (results.anomalias ? String(results.anomalias) : 'Sin datos')
                         }
                       </div>
                     </div>
@@ -617,11 +622,9 @@ const loadInterfaces = React.useCallback(async () => {
                     <div className="ml-4">
                       <p className="text-sm font-medium text-orange-600">% Anomalías</p>
                       <p className="text-2xl font-bold text-orange-900">
-                        {typeof results.porcentaje_anomalias === 'object'
-                          ? JSON.stringify(results.porcentaje_anomalias)
-                          : (typeof results.porcentaje_anomalias === 'number'
-                              ? results.porcentaje_anomalias.toFixed(2) + '%'
-                              : results.porcentaje_anomalias)}
+                        {typeof results.porcentaje_anomalias === 'number'
+                          ? results.porcentaje_anomalias.toFixed(2) + '%'
+                          : (results.porcentaje_anomalias ? String(results.porcentaje_anomalias) : 'Sin datos')}
                       </p>
                     </div>
                   </div>
